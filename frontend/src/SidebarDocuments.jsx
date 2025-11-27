@@ -39,6 +39,9 @@ function SidebarDocuments({ onStatsChange }) {
 
   useEffect(() => {
     loadDocuments();
+    // Auto-refresh every 5 seconds to catch new documents
+    const id = setInterval(loadDocuments, 5000);
+    return () => clearInterval(id);
   }, [loadDocuments]);
 
   const handleSelectDoc = async (docId) => {

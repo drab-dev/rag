@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import SidebarDocuments from './SidebarDocuments.jsx';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -538,7 +538,350 @@ function App() {
             )}
           </div>
         </section>
+
+        {/* SECTION 6 — GRAPH VISUALIZATION */}
+        <section className="card" id="graph-visualization-panel">
+          <h2>Graph Visualization</h2>
+          <p className="helper-text">
+            Visual representation of nodes and edges from the relationship query above.
+          </p>
+          <GraphVisualization
+            relationshipsData={relationships.state}
+            neighborsData={neighbors.state}
+            docId={relDocId}
+          />
+        </section>
       </aside>
+    </div>
+  );
+}
+
+// Graph Visualization Component
+function GraphVisualization({ relationshipsData, neighborsData, docId }) {
+  const canvasRef = useRef(null);
+  const [hoveredNode, setHoveredNode] = useState(null);
+  const [nodes, setNodes] = useState([]);
+  const [edges, setEdges] = useState([]);
+  const [draggedNode, setDraggedNode] = useState(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+
+  // Build nodes and edges when data changes
+  useEffect(() => {
+    if (!relationshipsData) {
+      setNodes([]);
+      setEdges([]);
+      return;
+    }
+    if (!canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Build nodes and edges from data
+    const newNodes = [];
+    const newEdges = [];
+
+    if (relationshipsData && docId) {
+      // Central document node (blue)
+      newNodes.push({
+        id: docId,
+        label: docId,
+        type: 'document',
+        x: width / 2,
+        y: height / 2,
+      });
+
+      // Entity nodes (green) connected to the document
+      const entities = relationshipsData.entities || [];
+      const angleStep = (2 * Math.PI) / Math.max(entities.length, 1);
+      const radius = 120;
+
+      entities.forEach((entity, idx) => {
+        const angle = idx * angleStep;
+        const x = width / 2 + radius * Math.cos(angle);
+        const y = height / 2 + radius * Math.sin(angle);
+
+        newNodes.push({
+          id: entity,
+          label: entity,
+          type: 'entity',
+          x,
+          y,
+        });
+
+        // Edge from document to entity
+        newEdges.push({
+          from: docId,
+          to: entity,
+        });
+      });
+
+      // Related documents (blue) - outer ring
+      const relatedDocs = relationshipsData.related_documents || [];
+      const outerRadius = 200;
+      const outerAngleStep = (2 * Math.PI) / Math.max(relatedDocs.length, 1);
+
+      relatedDocs.forEach((doc, idx) => {
+        const angle = idx * outerAngleStep;
+        const x = width / 2 + outerRadius * Math.cos(angle);
+        const y = height / 2 + outerRadius * Math.sin(angle);
+
+        // Check if node already exists
+        if (!newNodes.find(n => n.id === doc)) {
+          newNodes.push({
+            id: doc,
+            label: doc,
+            type: 'document',
+            x,
+            y,
+          });
+        }
+
+        // Find common entities to connect through
+        entities.forEach((entity) => {
+          const relatedViaEntity = relationshipsData.related_via_entities?.[entity] || [];
+          if (relatedViaEntity.includes(doc)) {
+            newEdges.push({
+              from: entity,
+              to: doc,
+            });
+          }
+        });
+      });
+    }
+
+    setNodes(newNodes);
+    setEdges(newEdges);
+  }, [relationshipsData, docId]);
+
+  // Draw the graph
+  useEffect(() => {
+    if (!canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#020617';
+    ctx.fillRect(0, 0, width, height);
+
+    if (nodes.length === 0) return;
+
+    // Save context and apply transformations
+    ctx.save();
+    ctx.translate(pan.x, pan.y);
+    ctx.scale(zoom, zoom);
+
+    // Draw edges
+    ctx.strokeStyle = '#1f2937';
+    ctx.lineWidth = 2 / zoom;
+    edges.forEach(edge => {
+      const fromNode = nodes.find(n => n.id === edge.from);
+      const toNode = nodes.find(n => n.id === edge.to);
+      if (fromNode && toNode) {
+        ctx.beginPath();
+        ctx.moveTo(fromNode.x, fromNode.y);
+        ctx.lineTo(toNode.x, toNode.y);
+        ctx.stroke();
+      }
+    });
+
+    // Draw nodes
+    nodes.forEach(node => {
+      const isHovered = hoveredNode === node.id;
+      const isDragged = draggedNode === node.id;
+      const nodeRadius = (isHovered || isDragged) ? 28 : 24;
+
+      // Node circle
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI);
+      ctx.fillStyle = node.type === 'document' ? '#3b82f6' : '#4ade80';
+      ctx.fill();
+      ctx.strokeStyle = isDragged ? '#fbbf24' : (isHovered ? '#ffffff' : '#1f2937');
+      ctx.lineWidth = (isHovered || isDragged) ? 3 / zoom : 2 / zoom;
+      ctx.stroke();
+
+      // Node label
+      ctx.fillStyle = '#e5e7eb';
+      const fontSize = (isHovered || isDragged) ? 11 : 10;
+      ctx.font = `${(isHovered || isDragged) ? 'bold' : 'normal'} ${fontSize}px system-ui`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      // Truncate label if too long
+      let label = node.label;
+      if (label.length > 12) {
+        label = label.substring(0, 10) + '...';
+      }
+      
+      // Draw label below the node
+      ctx.fillText(label, node.x, node.y + nodeRadius + 12);
+    });
+
+    // Restore context
+    ctx.restore();
+
+  }, [nodes, edges, hoveredNode, draggedNode, zoom, pan]);
+
+  const screenToCanvas = (screenX, screenY) => {
+    return {
+      x: (screenX - pan.x) / zoom,
+      y: (screenY - pan.y) / zoom,
+    };
+  };
+
+  const getNodeAtPosition = (x, y) => {
+    const canvasPos = screenToCanvas(x, y);
+    for (const node of nodes) {
+      const dx = canvasPos.x - node.x;
+      const dy = canvasPos.y - node.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance <= 24) {
+        return node;
+      }
+    }
+    return null;
+  };
+
+  const handleMouseDown = (e) => {
+    if (!canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const node = getNodeAtPosition(x, y);
+    if (node) {
+      const canvasPos = screenToCanvas(x, y);
+      setDraggedNode(node.id);
+      setDragOffset({
+        x: canvasPos.x - node.x,
+        y: canvasPos.y - node.y,
+      });
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (!canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // If dragging, update node position
+    if (draggedNode) {
+      const canvasPos = screenToCanvas(x, y);
+      setNodes(prevNodes => 
+        prevNodes.map(node => 
+          node.id === draggedNode
+            ? { ...node, x: canvasPos.x - dragOffset.x, y: canvasPos.y - dragOffset.y }
+            : node
+        )
+      );
+    } else {
+      // Check if mouse is over any node for hover effect
+      const node = getNodeAtPosition(x, y);
+      setHoveredNode(node ? node.id : null);
+    }
+  };
+
+  const handleMouseUp = () => {
+    setDraggedNode(null);
+  };
+
+  const handleWheel = (e) => {
+    e.preventDefault();
+    
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Calculate zoom
+    const delta = -e.deltaY;
+    const zoomFactor = delta > 0 ? 1.1 : 0.9;
+    const newZoom = Math.max(0.3, Math.min(3, zoom * zoomFactor));
+
+    // Zoom towards mouse position
+    const zoomRatio = newZoom / zoom;
+    const newPan = {
+      x: mouseX - (mouseX - pan.x) * zoomRatio,
+      y: mouseY - (mouseY - pan.y) * zoomRatio,
+    };
+
+    setZoom(newZoom);
+    setPan(newPan);
+  };
+
+  const handleZoomIn = () => {
+    setZoom(prevZoom => Math.min(3, prevZoom * 1.2));
+  };
+
+  const handleZoomOut = () => {
+    setZoom(prevZoom => Math.max(0.3, prevZoom / 1.2));
+  };
+
+  const handleResetZoom = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  if (!relationshipsData && !neighborsData) {
+    return (
+      <div className="graph-viz-empty">
+        <p className="helper-text">
+          Click "Get Relationships" above to visualize the graph.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="graph-viz-container">
+      <div className="graph-viz-controls">
+        <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In">
+          +
+        </button>
+        <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out">
+          −
+        </button>
+        <button className="zoom-btn reset-btn" onClick={handleResetZoom} title="Reset Zoom">
+          ↺
+        </button>
+        <span className="zoom-level">{Math.round(zoom * 100)}%</span>
+      </div>
+      <canvas
+        ref={canvasRef}
+        width={380}
+        height={400}
+        className="graph-viz-canvas"
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onWheel={handleWheel}
+        onMouseLeave={() => {
+          setHoveredNode(null);
+          setDraggedNode(null);
+        }}
+      />
+      <div className="graph-viz-legend">
+        <div className="legend-item">
+          <div className="legend-circle document"></div>
+          <span>Document</span>
+        </div>
+        <div className="legend-item">
+          <div className="legend-circle entity"></div>
+          <span>Entity</span>
+        </div>
+      </div>
     </div>
   );
 }

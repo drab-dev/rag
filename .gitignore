@@ -55,3 +55,6 @@ htmlcov/
 # Environment variables
 .env
 .env.local
+
+# Frontend dependencies
+frontend/node_modules/
