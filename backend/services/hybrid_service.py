@@ -10,6 +10,8 @@ from typing import Dict, List, Any, Set
 from backend.services.search_service import semantic_search
 from backend.db.graph_db import get_graph_db
 from backend.db.chroma_db import get_chroma_db
+from backend.services.ai_relation_service import analyze_document_relationships
+from models.llm_client import is_llm_configured
 
 def _normalize_scores(raw_scores: Dict[str, float]) -> Dict[str, float]:
     """Min-max normalise a mapping of id -> score into [0, 1]."""
@@ -303,39 +305,54 @@ def graph_neighbors(doc_id: str, depth: int = 1) -> Dict[str, Any]:
 
 
 def get_document_relationships(doc_id: str) -> Dict[str, Any]:
-    """
-    Get detailed relationship information for a document
-    
+    """Get detailed relationship information for a document.
+
+    This function now prefers an AI-based implementation (using the Groq LLM)
+    when available, with a graceful fallback to the legacy graph-based logic.
+
     Args:
         doc_id: Document identifier
-        
+
     Returns:
-        Dictionary with relationship details
+        Dictionary with relationship details compatible with the existing
+        frontend contract.
     """
+    # First, try the AI-powered implementation if the LLM is configured.
+    if is_llm_configured():
+        try:
+            ai_result = analyze_document_relationships(doc_id)
+            if ai_result.get("success"):
+                return ai_result
+        except Exception:
+            # If anything goes wrong with the AI layer, fall back silently to
+            # the graph-based implementation below.
+            pass
+
+    # Legacy graph-based behavior (exact entity string matching).
     try:
         graph_db = get_graph_db()
-        
+
         if not graph_db.node_exists(doc_id):
             return {
                 "success": False,
                 "doc_id": doc_id,
-                "error": "Document not found in graph"
+                "error": "Document not found in graph",
             }
-        
+
         # Get entities connected to this document
         entities = graph_db.get_document_entities(doc_id)
-        
+
         # For each entity, find related documents
         related_via_entities = {}
         all_related_docs = set()
-        
+
         for entity in entities:
             related_docs = graph_db.get_related_documents(entity)
             # Filter out the source document itself
             related_docs = [doc for doc in related_docs if doc != doc_id]
             related_via_entities[entity] = related_docs
             all_related_docs.update(related_docs)
-        
+
         return {
             "success": True,
             "doc_id": doc_id,
@@ -343,12 +360,12 @@ def get_document_relationships(doc_id: str) -> Dict[str, Any]:
             "entities_count": len(entities),
             "related_via_entities": related_via_entities,
             "related_documents": list(all_related_docs),
-            "related_documents_count": len(all_related_docs)
+            "related_documents_count": len(all_related_docs),
         }
-        
+
     except Exception as e:
         return {
             "success": False,
             "doc_id": doc_id,
-            "error": str(e)
+            "error": str(e),
         }
