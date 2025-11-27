@@ -7,8 +7,5 @@ nltk==3.8.1
 pydantic>=2.7.0,<3.0.0
 spacy>=3.7.0
 groq
-<<<<<<< HEAD
 python-dotenv>=1.0.0
-=======
 gunicorn>=21.0.0
->>>>>>> e384c75 (trial commit)
