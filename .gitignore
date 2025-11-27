@@ -56,5 +56,8 @@ htmlcov/
 .env
 .env.local
 
+# Example env file (safe to commit)
+!.env.example
+
 # Frontend dependencies
 frontend/node_modules/
